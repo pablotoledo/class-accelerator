@@ -7,6 +7,8 @@ import psutil
 import threading
 import time
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import LlamaForCausalLM, LlamaTokenizer
+import torch
 
 st.set_page_config(layout="wide")
 
@@ -44,8 +46,16 @@ st.sidebar.divider()
 st.sidebar.write("**Sumarización de Texto**")
 summary_model = st.sidebar.selectbox("Modelo de Resumen", ["dolphin-2.8-mistral-7b-v02 32k", "llama3"], index=0)
 
+prompt_value = st.sidebar.text_area("Prompt de texto", value="Resuma el siguiente texto, identificando los puntos clave y ejemplos importantes. El resumen debe ser conciso pero informativo.", height=200)
+
 # Contenido principal
 st.title("Class Accelerator")
+
+def clean_summary(text):
+    # Filtrar contenido residual en inglés y corregir texto cortado
+    text = text.replace("this answer", "").strip()
+    text = text.split("Resumen:")[-1].strip()  # Extraer solo la parte del resumen
+    return text
 
 def summarize_dolphin(text):
     model_path = "cognitivecomputations/dolphin-2.8-mistral-7b-v02"
@@ -54,27 +64,36 @@ def summarize_dolphin(text):
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         model = AutoModelForCausalLM.from_pretrained(model_path)
         
-        summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
         
-        # Tokenizar el texto completo
+        # Dividir el texto en chunks de aproximadamente 1000 tokens
         tokens = tokenizer.encode(text)
-        
-        # Dividir en chunks de aproximadamente 1000 tokens cada uno
         chunk_size = 1000
         chunks = [tokens[i:i + chunk_size] for i in range(0, len(tokens), chunk_size)]
         
         summaries = []
         for i, chunk in enumerate(chunks):
             chunk_text = tokenizer.decode(chunk)
-            # Usar max_new_tokens en lugar de max_length
-            summary = summarizer(chunk_text, max_new_tokens=200, min_length=50, do_sample=False)
-            summaries.append(summary[0]['summary_text'])
+            
+            prompt = f"""{prompt_value}
+
+Texto:
+{chunk_text}
+
+Resumen:"""
+            
+            # Generar el resumen
+            summary = pipe(prompt, max_new_tokens=200, do_sample=True, temperature=0.7)[0]['generated_text']
+            clean_text = clean_summary(summary)
+            
+            summaries.append(clean_text)
+            
             # Actualizar progreso
             progress = (i + 1) / len(chunks)
             st.progress(progress)
         
         # Si hay muchos resúmenes, resumirlos de nuevo
-        if len(summaries) > 10:
+        if len(summaries) > 5:
             final_summary = summarize_dolphin(" ".join(summaries))
         else:
             final_summary = " ".join(summaries)
@@ -83,14 +102,51 @@ def summarize_dolphin(text):
     except Exception as e:
         st.error(f"Error al cargar el modelo o generar el resumen: {str(e)}")
         return None
+    
+def summarize_llama3(text):
+    model_id = "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated"
+    
+    try:
+        # Configuración personalizada para el modelo
+        model_config = {
+            "rope_scaling": {
+                "type": "dynamic",
+                "factor": 8.0
+            }
+        }
+
+        # Cargar el tokenizador y el modelo con la configuración personalizada
+        tokenizer = LlamaTokenizer.from_pretrained(model_id)
+        model = LlamaForCausalLM.from_pretrained(model_id, config=model_config)
+
+        # Crear el pipeline con el modelo y tokenizador personalizados
+        pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            #device_map="auto",
+        )
+        
+        messages = [
+            {"role": "system", "content": "Eres un asistente experto en resumir texto. Proporciona resúmenes concisos pero informativos."},
+            {"role": "user", "content": f"{prompt_value}\n\nTexto:\n{text}\n\nResumen:"}
+        ]
+        
+        # Generar el resumen
+        output = pipe(messages, max_new_tokens=500, do_sample=True, temperature=0.7)
+        summary = output[0]["generated_text"].split("Resumen:")[-1].strip()
+        
+        return summary
+    except Exception as e:
+        st.error(f"Error al cargar el modelo o generar el resumen con Llama 3: {str(e)}")
+        return None
 
 def summarize_text(text, model_name):
     if model_name == "dolphin-2.8-mistral-7b-v02 32k":
         return summarize_dolphin(text)
     elif model_name == "llama3":
         model_path = "meta-llama/Llama-2-7b-chat-hf"
-        # Implementar la lógica para el modelo llama3 aquí
-        return "Resumen con llama3 no implementado aún"
+        return summarize_llama3(text)
 
 def monitor_resources(stop_event, progress_bar):
     while not stop_event.is_set():
