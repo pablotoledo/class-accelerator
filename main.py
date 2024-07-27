@@ -47,23 +47,50 @@ summary_model = st.sidebar.selectbox("Modelo de Resumen", ["dolphin-2.8-mistral-
 # Contenido principal
 st.title("Class Accelerator")
 
-def summarize_text(text, model_name):
-    if model_name == "dolphin-2.8-mistral-7b-v02 32k":
-        model_path = "cognitivecomputations/dolphin-2.8-mistral-7b-v02"
-    elif model_name == "llama3":
-        model_path = "meta-llama/Llama-2-7b-chat-hf"
+def summarize_dolphin(text):
+    model_path = "cognitivecomputations/dolphin-2.8-mistral-7b-v02"
     
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
         model = AutoModelForCausalLM.from_pretrained(model_path)
         
         summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
-        summary = summarizer(text, max_length=150, min_length=50, do_sample=False)
         
-        return summary[0]['summary_text']
+        # Tokenizar el texto completo
+        tokens = tokenizer.encode(text)
+        
+        # Dividir en chunks de aproximadamente 1000 tokens cada uno
+        chunk_size = 1000
+        chunks = [tokens[i:i + chunk_size] for i in range(0, len(tokens), chunk_size)]
+        
+        summaries = []
+        for i, chunk in enumerate(chunks):
+            chunk_text = tokenizer.decode(chunk)
+            # Usar max_new_tokens en lugar de max_length
+            summary = summarizer(chunk_text, max_new_tokens=200, min_length=50, do_sample=False)
+            summaries.append(summary[0]['summary_text'])
+            # Actualizar progreso
+            progress = (i + 1) / len(chunks)
+            st.progress(progress)
+        
+        # Si hay muchos resúmenes, resumirlos de nuevo
+        if len(summaries) > 10:
+            final_summary = summarize_dolphin(" ".join(summaries))
+        else:
+            final_summary = " ".join(summaries)
+        
+        return final_summary
     except Exception as e:
         st.error(f"Error al cargar el modelo o generar el resumen: {str(e)}")
         return None
+
+def summarize_text(text, model_name):
+    if model_name == "dolphin-2.8-mistral-7b-v02 32k":
+        return summarize_dolphin(text)
+    elif model_name == "llama3":
+        model_path = "meta-llama/Llama-2-7b-chat-hf"
+        # Implementar la lógica para el modelo llama3 aquí
+        return "Resumen con llama3 no implementado aún"
 
 def monitor_resources(stop_event, progress_bar):
     while not stop_event.is_set():
@@ -202,24 +229,18 @@ if st.session_state.transcription:
         with st.spinner(f'Generando resumen con el modelo {summary_model}...'):
             try:
                 summary = summarize_text(st.session_state.transcription, summary_model)
-                st.session_state.summary = summary
-
-                with st.expander("Mostrar resumen"):
-                    st.subheader("Resumen:")
-                    st.write(st.session_state.summary)
-                
-                st.download_button(
-                    label="Descargar resumen como .txt",
-                    data=st.session_state.summary,
-                    file_name="resumen.txt",
-                    mime="text/plain"
-                )
+                if summary:
+                    st.session_state.summary = summary
+                    st.success("Resumen generado con éxito.")
+                    st.experimental_rerun()
+                else:
+                    st.error("No se pudo generar un resumen.")
             except Exception as e:
                 st.error(f"Error durante la generación del resumen: {str(e)}")
 
 # Mostrar el resumen si ya está generado
 if st.session_state.summary:
-    with st.expander("Mostrar resumen"):
+    with st.expander("Mostrar resumen", expanded=True):
         st.subheader("Resumen:")
         st.write(st.session_state.summary)
     
