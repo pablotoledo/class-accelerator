@@ -6,6 +6,7 @@ import whisper
 import psutil
 import threading
 import time
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 st.set_page_config(layout="wide")
 
@@ -14,12 +15,13 @@ if 'audio_extracted' not in st.session_state:
     st.session_state.audio_extracted = False
 if 'audio_bytes' not in st.session_state:
     st.session_state.audio_bytes = None
+if 'transcription' not in st.session_state:
+    st.session_state.transcription = None
+if 'summary' not in st.session_state:
+    st.session_state.summary = None
 
 # Sidebar
 st.sidebar.title("Configuración")
-
-# Ejemplo de entrada de texto en la barra lateral
-#variable1 = st.sidebar.text_input("Variable 1", "Valor predeterminado")
 
 st.sidebar.write("**Extracción de Audio**")
 
@@ -29,20 +31,39 @@ num_threads = st.sidebar.slider("Número de threads", min_value=1, max_value=os.
 st.sidebar.divider()
 
 # Whisper Speech-to-Text
-
 st.sidebar.write("**Speech-to-Text**")
 
 # Selección del modelo de Whisper
 whisper_model = st.sidebar.selectbox("Modelo de Whisper", ["tiny", "base", "small", "medium", "large"], index=2)
 
-# Seleccion de idioma de Whisper
+# Selección de idioma de Whisper
 language = st.sidebar.selectbox("Idioma de Whisper", ["en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"], index=1)
 
-## Sumarización de texto
+# Sumarización de texto
 st.sidebar.divider()
+st.sidebar.write("**Sumarización de Texto**")
+summary_model = st.sidebar.selectbox("Modelo de Resumen", ["dolphin-2.8-mistral-7b-v02 32k", "llama3"], index=0)
 
 # Contenido principal
 st.title("Class Accelerator")
+
+def summarize_text(text, model_name):
+    if model_name == "dolphin-2.8-mistral-7b-v02 32k":
+        model_path = "cognitivecomputations/dolphin-2.8-mistral-7b-v02"
+    elif model_name == "llama3":
+        model_path = "meta-llama/Llama-2-7b-chat-hf"
+    
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+        model = AutoModelForCausalLM.from_pretrained(model_path)
+        
+        summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
+        summary = summarizer(text, max_length=150, min_length=50, do_sample=False)
+        
+        return summary[0]['summary_text']
+    except Exception as e:
+        st.error(f"Error al cargar el modelo o generar el resumen: {str(e)}")
+        return None
 
 def monitor_resources(stop_event, progress_bar):
     while not stop_event.is_set():
@@ -152,6 +173,9 @@ if st.session_state.audio_extracted:
                 # Realizar la transcripción
                 result = model.transcribe(tmp_audio_path, language=language)
 
+                # Guardar la transcripción en el estado de la sesión
+                st.session_state.transcription = result["text"]
+
                 # Detener el monitor de recursos
                 stop_event.set()
                 monitor_thread.join()
@@ -159,10 +183,10 @@ if st.session_state.audio_extracted:
                 # Mostrar la transcripción
                 with st.expander("Mostrar transcripción"):
                     st.subheader("Transcripción:")
-                    st.write(result["text"])
+                    st.write(st.session_state.transcription)
                 st.download_button(
                     label="Descargar transcripción como .txt",
-                    data=result["text"],
+                    data=st.session_state.transcription,
                     file_name="transcripcion.txt",
                     mime="text/plain"
                 )
@@ -171,3 +195,37 @@ if st.session_state.audio_extracted:
             finally:
                 # Limpiar el archivo temporal
                 os.unlink(tmp_audio_path)
+
+# Botón para generar resumen (fuera del bloque de transcripción)
+if st.session_state.transcription:
+    if st.button("Generar Resumen"):
+        with st.spinner(f'Generando resumen con el modelo {summary_model}...'):
+            try:
+                summary = summarize_text(st.session_state.transcription, summary_model)
+                st.session_state.summary = summary
+
+                with st.expander("Mostrar resumen"):
+                    st.subheader("Resumen:")
+                    st.write(st.session_state.summary)
+                
+                st.download_button(
+                    label="Descargar resumen como .txt",
+                    data=st.session_state.summary,
+                    file_name="resumen.txt",
+                    mime="text/plain"
+                )
+            except Exception as e:
+                st.error(f"Error durante la generación del resumen: {str(e)}")
+
+# Mostrar el resumen si ya está generado
+if st.session_state.summary:
+    with st.expander("Mostrar resumen"):
+        st.subheader("Resumen:")
+        st.write(st.session_state.summary)
+    
+    st.download_button(
+        label="Descargar resumen como .txt",
+        data=st.session_state.summary,
+        file_name="resumen.txt",
+        mime="text/plain"
+    )
