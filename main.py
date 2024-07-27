@@ -16,15 +16,30 @@ if 'audio_bytes' not in st.session_state:
     st.session_state.audio_bytes = None
 
 # Sidebar
-st.sidebar.title("Environment variables")
-variable1 = st.sidebar.text_input("Variable 1", "Valor predeterminado")
-st.sidebar.write("Class - Accelerator")
+st.sidebar.title("Configuración")
+
+# Ejemplo de entrada de texto en la barra lateral
+#variable1 = st.sidebar.text_input("Variable 1", "Valor predeterminado")
+
+st.sidebar.write("**Extracción de Audio**")
 
 # Captura dinámica del número de threads
 num_threads = st.sidebar.slider("Número de threads", min_value=1, max_value=os.cpu_count(), value=4)
 
+st.sidebar.divider()
+
+# Whisper Speech-to-Text
+
+st.sidebar.write("**Speech-to-Text**")
+
 # Selección del modelo de Whisper
-whisper_model = st.sidebar.selectbox("Modelo de Whisper", ["small", "medium", "large"])
+whisper_model = st.sidebar.selectbox("Modelo de Whisper", ["tiny", "base", "small", "medium", "large"], index=2)
+
+# Seleccion de idioma de Whisper
+language = st.sidebar.selectbox("Idioma de Whisper", ["en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"], index=1)
+
+## Sumarización de texto
+st.sidebar.divider()
 
 # Contenido principal
 st.title("Class Accelerator")
@@ -36,12 +51,12 @@ def monitor_resources(stop_event, progress_bar):
         progress_bar.progress(min(cpu_percent / 100, 1.0))
         time.sleep(1)
 
-def process_uploaded_file(uploaded_file, threads):
-    if uploaded_file is not None:
+def process_uploaded_file_mp4(uploaded_file_mp4, threads):
+    if uploaded_file_mp4 is not None:
         file_details = {
-            "Nombre del archivo": uploaded_file.name,
-            "Tipo de archivo": uploaded_file.type,
-            "Tamaño": f"{uploaded_file.size} bytes"
+            "Nombre del archivo": uploaded_file_mp4.name,
+            "Tipo de archivo": uploaded_file_mp4.type,
+            "Tamaño": f"{uploaded_file_mp4.size} bytes"
         }
         st.write("Detalles del archivo:")
         with st.expander("Mostrar detalles del archivo"):
@@ -51,7 +66,7 @@ def process_uploaded_file(uploaded_file, threads):
         with st.spinner('Extrayendo audio del video...'):
             # Crear archivos temporales para el video y el audio
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_video_file:
-                tmp_video_file.write(uploaded_file.getvalue())
+                tmp_video_file.write(uploaded_file_mp4.getvalue())
                 tmp_video_path = tmp_video_file.name
             tmp_audio_path = tempfile.mktemp(suffix='.wav')
 
@@ -92,14 +107,14 @@ def process_uploaded_file(uploaded_file, threads):
         st.experimental_rerun()
 
 # Área de carga de archivos
-uploaded_file = st.file_uploader("Arrastra y suelta un archivo aquí o haz clic para seleccionar",
+uploaded_file_mp4 = st.file_uploader("Arrastra y suelta un archivo aquí o haz clic para seleccionar",
                                  type=["mp4"],  # Solo permite archivos mp4
                                  accept_multiple_files=False)  # Solo permite un archivo
 
 # Procesar el archivo
-if uploaded_file is not None and not st.session_state.audio_extracted:
+if uploaded_file_mp4 is not None and not st.session_state.audio_extracted:
     if st.button("Convertir archivo a audio"):
-        process_uploaded_file(uploaded_file, num_threads)
+        process_uploaded_file_mp4(uploaded_file_mp4, num_threads)
 
 # Mostrar audio y botón de transcripción si el audio ha sido extraído
 if st.session_state.audio_extracted:
@@ -135,15 +150,22 @@ if st.session_state.audio_extracted:
                 model = whisper.load_model(whisper_model)
 
                 # Realizar la transcripción
-                result = model.transcribe(tmp_audio_path)
+                result = model.transcribe(tmp_audio_path, language=language)
 
                 # Detener el monitor de recursos
                 stop_event.set()
                 monitor_thread.join()
 
                 # Mostrar la transcripción
-                st.subheader("Transcripción:")
-                st.write(result["text"])
+                with st.expander("Mostrar transcripción"):
+                    st.subheader("Transcripción:")
+                    st.write(result["text"])
+                st.download_button(
+                    label="Descargar transcripción como .txt",
+                    data=result["text"],
+                    file_name="transcripcion.txt",
+                    mime="text/plain"
+                )
             except Exception as e:
                 st.error(f"Error durante la transcripción: {str(e)}")
             finally:
