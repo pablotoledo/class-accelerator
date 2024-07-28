@@ -4,3 +4,7 @@ whisper
 torch 
 psutil
 sentencepiece
+#"huggingface_hub[cli]"
+transformers==4.43.1
+vllm==0.5.3.post1
+accelerate

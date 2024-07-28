@@ -6,8 +6,6 @@ import whisper
 import psutil
 import threading
 import time
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from transformers import LlamaForCausalLM, LlamaTokenizer
 import torch
 
 st.set_page_config(layout="wide")
@@ -44,7 +42,7 @@ language = st.sidebar.selectbox("Idioma de Whisper", ["en", "es", "fr", "de", "i
 # Sumarización de texto
 st.sidebar.divider()
 st.sidebar.write("**Sumarización de Texto**")
-summary_model = st.sidebar.selectbox("Modelo de Resumen", ["dolphin-2.8-mistral-7b-v02 32k", "llama3"], index=0)
+summary_model = st.sidebar.selectbox("Modelo de Resumen", ["dolphin-2.8-mistral-7b-v02 32k", "llama3"], index=1)
 
 prompt_value = st.sidebar.text_area("Prompt de texto", value="Resuma el siguiente texto, identificando los puntos clave y ejemplos importantes. El resumen debe ser conciso pero informativo.", height=200)
 
@@ -58,6 +56,7 @@ def clean_summary(text):
     return text
 
 def summarize_dolphin(text):
+    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
     model_path = "cognitivecomputations/dolphin-2.8-mistral-7b-v02"
     
     try:
@@ -104,48 +103,56 @@ Resumen:"""
         return None
     
 def summarize_llama3(text):
-    model_id = "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated"
+    import transformers
+    import torch
+
+    model_id = "meta-llama/Meta-Llama-3.1-8B"
     
     try:
-        # Configuración personalizada para el modelo
-        model_config = {
-            "rope_scaling": {
+        # Configurar el tokenizador
+        tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
+
+        # Configurar el modelo con la configuración correcta de rope_scaling
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            rope_scaling={
                 "type": "dynamic",
-                "factor": 8.0
+                "factor": 2.0
             }
-        }
+        )
 
-        # Cargar el tokenizador y el modelo con la configuración personalizada
-        tokenizer = LlamaTokenizer.from_pretrained(model_id)
-        model = LlamaForCausalLM.from_pretrained(model_id, config=model_config)
-
-        # Crear el pipeline con el modelo y tokenizador personalizados
-        pipe = pipeline(
+        # Crear el pipeline con el modelo y tokenizador configurados
+        pipeline = transformers.pipeline(
             "text-generation",
             model=model,
             tokenizer=tokenizer,
-            #device_map="auto",
         )
         
         messages = [
             {"role": "system", "content": "Eres un asistente experto en resumir texto. Proporciona resúmenes concisos pero informativos."},
             {"role": "user", "content": f"{prompt_value}\n\nTexto:\n{text}\n\nResumen:"}
         ]
+
+        output = pipeline(
+            messages,
+            max_new_tokens=500,
+            do_sample=True,
+            temperature=0.7
+        )
         
-        # Generar el resumen
-        output = pipe(messages, max_new_tokens=500, do_sample=True, temperature=0.7)
         summary = output[0]["generated_text"].split("Resumen:")[-1].strip()
         
         return summary
     except Exception as e:
         st.error(f"Error al cargar el modelo o generar el resumen con Llama 3: {str(e)}")
         return None
-
+    
 def summarize_text(text, model_name):
     if model_name == "dolphin-2.8-mistral-7b-v02 32k":
         return summarize_dolphin(text)
     elif model_name == "llama3":
-        model_path = "meta-llama/Llama-2-7b-chat-hf"
         return summarize_llama3(text)
 
 def monitor_resources(stop_event, progress_bar):
@@ -208,7 +215,7 @@ def process_uploaded_file_mp4(uploaded_file_mp4, threads):
             os.unlink(tmp_audio_path)
 
         st.session_state.audio_extracted = True
-        st.experimental_rerun()
+        st.rerun()
 
 # Área de carga de archivos
 uploaded_file_mp4 = st.file_uploader("Arrastra y suelta un archivo aquí o haz clic para seleccionar",
@@ -288,7 +295,7 @@ if st.session_state.transcription:
                 if summary:
                     st.session_state.summary = summary
                     st.success("Resumen generado con éxito.")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("No se pudo generar un resumen.")
             except Exception as e:
