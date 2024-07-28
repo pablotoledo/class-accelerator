@@ -102,7 +102,7 @@ Resumen:"""
         st.error(f"Error al cargar el modelo o generar el resumen: {str(e)}")
         return None
     
-def summarize_llama3(text):
+def summarize_llama3(text, prompt_value):
     import transformers
     import torch
 
@@ -129,31 +129,36 @@ def summarize_llama3(text):
             model=model,
             tokenizer=tokenizer,
         )
+       
+        # Preparar el prompt
+        full_prompt = f"Eres un asistente experto en resumir texto. Proporciona resúmenes concisos pero informativos.\n\n{prompt_value}\n\nTexto:\n{text}\n\nResumen:"
         
-        messages = [
-            {"role": "system", "content": "Eres un asistente experto en resumir texto. Proporciona resúmenes concisos pero informativos."},
-            {"role": "user", "content": f"{prompt_value}\n\nTexto:\n{text}\n\nResumen:"}
-        ]
-
+        # Generar el resumen
         output = pipeline(
-            messages,
+            full_prompt,
             max_new_tokens=500,
             do_sample=True,
-            temperature=0.7
+            temperature=0.7,
+            num_return_sequences=1
         )
-        
-        summary = output[0]["generated_text"].split("Resumen:")[-1].strip()
-        
+       
+        # Extraer el resumen generado
+        if isinstance(output, list) and len(output) > 0:
+            generated_text = output[0]['generated_text']
+            summary = generated_text.split("Resumen:")[-1].strip()
+        else:
+            summary = "No se pudo generar un resumen coherente."
+       
         return summary
     except Exception as e:
         st.error(f"Error al cargar el modelo o generar el resumen con Llama 3: {str(e)}")
         return None
-    
+
 def summarize_text(text, model_name):
     if model_name == "dolphin-2.8-mistral-7b-v02 32k":
         return summarize_dolphin(text)
     elif model_name == "llama3":
-        return summarize_llama3(text)
+        return summarize_llama3(text, prompt_value)
 
 def monitor_resources(stop_event, progress_bar):
     while not stop_event.is_set():
